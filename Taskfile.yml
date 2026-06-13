@@ -1,0 +1,16 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  COMPOSE_PROFILES: '{{.COMPOSE_PROFILES | default "local"}}'
+
+tasks:
+  default:
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the docker containers
+    cmds:
+      - docker build --ssh default -f ./docker/images/frankenphp.Dockerfile -t frankenphp .
