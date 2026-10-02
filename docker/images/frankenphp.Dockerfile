@@ -23,5 +23,6 @@ RUN install-php-extensions \
     mbstring \
 	opcache \
     redis \
+    timezonedb \
     vips \
 	zip
