@@ -1,6 +1,6 @@
-FROM dunglas/frankenphp:1.12.2-php8.4 AS backend_server
+FROM dunglas/frankenphp:1.13-php8.4 AS backend_server
 
-ARG COMPOSER_VERSION=2.9.8
+ARG COMPOSER_VERSION=2.10.3
 ARG APP_ENV=prod
 RUN apt-get update && apt-get install -y \
     bash \

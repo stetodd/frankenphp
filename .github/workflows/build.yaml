@@ -5,44 +5,86 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
   packages: write
-  
+
+env:
+  IMAGE_URL: ghcr.io/stetodd/frankenphp/base-frankenphp
+  PUSH: ${{ github.ref == 'refs/heads/main' }}
+
 jobs:
-  build_frankenphp:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-26.04
+            slug: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-26.04-arm
+            slug: linux-arm64
 
     steps:
-      -   uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      -   name: Lowercase github.repository
-          run: |
-            echo "CONTAINER_URL=ghcr.io/stetodd/frankenphp" >> ${GITHUB_ENV}
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo docker image prune -af
+          df -h
 
-      -   name: Set up Docker Buildx
-          uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-      -   name: Log in to GitHub Container Registry
-          uses: docker/login-action@v3
-          with:
-            registry: ghcr.io
-            username: ${{ github.actor }}
-            password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to GitHub Container Registry
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      -   name: Build and push frankenphp image
-          uses: docker/build-push-action@v5
-          with:
-            context: .
-            platforms: linux/amd64,linux/arm64
-            file: ./docker/images/frankenphp.Dockerfile
-            push: true
-            tags: |
-              ${{ env.CONTAINER_URL }}/base-frankenphp:latest
-              ${{ env.CONTAINER_URL }}/base-frankenphp:${{ github.sha }}
-            cache-from: |
-              type=gha
-            cache-to: |
-              type=gha
+      - name: Build and push frankenphp image (${{ matrix.platform }})
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          file: ./docker/images/frankenphp.Dockerfile
+          push: ${{ env.PUSH == 'true' }}
+          tags: |
+            ${{ env.IMAGE_URL }}:latest-${{ matrix.slug }}
+            ${{ env.IMAGE_URL }}:${{ github.sha }}-${{ matrix.slug }}
+          cache-from: type=gha,scope=frankenphp-${{ matrix.slug }}
+          cache-to: type=gha,scope=frankenphp-${{ matrix.slug }},mode=max
+
+  merge:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    needs: build
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Merge the sha tags rather than latest-*, so an overlapping run can't mix architectures from different commits
+      - name: Create and push multi-arch manifest
+        run: |
+          docker buildx imagetools create \
+            --tag ${{ env.IMAGE_URL }}:latest \
+            --tag ${{ env.IMAGE_URL }}:${{ github.sha }} \
+            ${{ env.IMAGE_URL }}:${{ github.sha }}-linux-amd64 \
+            ${{ env.IMAGE_URL }}:${{ github.sha }}-linux-arm64
